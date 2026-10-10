@@ -193,7 +193,7 @@ async function configureSupabaseClient(config,options={}){
  if(state.supabaseClient){try{await state.supabaseClient.auth.signOut({scope:'local'})}catch{}}
  state.supabaseClient=null;state.supabaseSession=null;state.user=null;renderProfile();
  const mod=await import(SUPABASE_SDK_URL);
- const client=mod.createClient(config.url,config.publishableKey,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true,flowType:'pkce'}});
+ const client=mod.createClient(config.url,config.publishableKey,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true,flowType:'pkce',storage:window.localStorage}});
  state.supabaseClient=client;
  const subscription=client.auth.onAuthStateChange((event,session)=>{
   const previousUserId=state.supabaseSession?.user?.id||'';
@@ -253,11 +253,39 @@ async function bootstrapAppSession(session,options={}){
    if(epoch!==(state.bootstrapEpoch||0)||(state.supabaseSession?.user?.id&&state.supabaseSession.user.id!==userId))return false;
    state.user=null;renderProfile();
    if(['PROFILE_SETUP_REQUIRED','USERNAME_TAKEN','USERNAME_INVALID'].includes(e.code)){usernameSetupModal();return false}
+   // A transient/stale access token should not force a user to sign in on every page refresh.
+   // Refresh once with Supabase, then retry the app-side bootstrap. Explicitly revoked or expired
+   // app sessions still require a fresh login, preserving the server-side seven-day session policy.
+   if(e.code==='AUTH_INVALID_TOKEN'&&!options.tokenRefreshRetry){
+    if(state.bootstrapTask===task)state.bootstrapTask=null;
+    try{
+     const refreshed=await state.supabaseClient.auth.refreshSession();
+     const freshSession=refreshed?.data?.session;
+     if(!refreshed?.error&&freshSession?.access_token){
+      state.supabaseSession=freshSession;
+      return await bootstrapAppSession(freshSession,{...options,tokenRefreshRetry:true,quiet:true});
+     }
+    }catch{}
+   }
    if(['AUTH_SESSION_EXPIRED','AUTH_SESSION_REVOKED','AUTH_INVALID_TOKEN','AUTH_EMAIL_UNVERIFIED'].includes(e.code)){
     try{await state.supabaseClient.auth.signOut({scope:'local'})}catch{}
-    if(!options.quiet)toast('請重新登入','本站工作階段無效、已撤銷、逾期或 Email 尚未驗證。','warn');return false;
+    if(!options.quiet||options.tokenRefreshRetry)toast('登入狀態需要重新確認','本站工作階段可能已撤銷、逾期，或 Supabase 無法更新登入 Token。請重新登入；若每次重新整理都發生，請回報此提示。','warn');return false;
    }
-   if(!options.quiet)toast('本站會員工作階段尚未建立',e.message+'。不會將 Supabase 登入狀態當成本站權限已通過。','error');
+   // On page restoration, retry one transient Worker/GAS/network failure instead of
+   // leaving the UI in guest mode after a single failed bootstrap request.
+   if(!options.restoreRetry){
+    if(state.bootstrapTask===task)state.bootstrapTask=null;
+    try{
+     await new Promise(resolve=>setTimeout(resolve,600));
+     const current=await state.supabaseClient.auth.getSession();
+     const retrySession=current?.data?.session;
+     if(retrySession?.access_token&&retrySession?.user?.id===userId){
+      state.supabaseSession=retrySession;
+      return await bootstrapAppSession(retrySession,{...options,restoreRetry:true,quiet:true});
+     }
+    }catch{}
+   }
+   if(!options.quiet||options.restoreRetry)toast('登入狀態尚未恢復',e.message+'。系統已嘗試重新確認一次；若仍無法連線，請檢查 Worker/GAS 狀態後再重新整理。','error');
    return false;
   }
  })();
