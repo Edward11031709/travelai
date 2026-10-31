@@ -386,7 +386,7 @@ function handleMealSubmit(form){
 const SUPABASE_SDK_URL='https://esm.sh/@supabase/supabase-js@2.117.2';
 // Shared deployment configuration. This is intentionally global, not per-browser.
 // Replace WORKER_API_BASE once with the deployed Cloudflare Worker HTTPS URL before publishing.
-const DEPLOYMENT_CONFIG = Object.freeze({ WORKER_API_BASE: '' });
+const DEPLOYMENT_CONFIG = Object.freeze({ WORKER_API_BASE: 'https://travelmate-test-api.cameltest12.workers.dev/' });
 function getAuthRedirectURL(){return window.location.origin+window.location.pathname}
 function unwrapApiResult(result){return result&&Object.prototype.hasOwnProperty.call(result,'data')?result.data:result}
 function safeMetaString(value,max=80){return typeof value==='string'?value.trim().slice(0,max):''}
